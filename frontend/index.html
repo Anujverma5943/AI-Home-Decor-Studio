@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Home Decor & Construction Planning Studio</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=Fraunces:wght@600&display=swap" rel="stylesheet">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<style>
+:root{--bg:#0e1923;--panel:#15232f;--line:#2b4254;--ink:#e6edf2;--mute:#8aa0b0;--acc:#e0a84a;--bad:#e5765f}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "IBM Plex Sans",sans-serif;height:100vh;display:flex;flex-direction:column}
+header{display:flex;gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}
+h1{font:600 18px Fraunces,serif;margin:0 auto 0 0}h3{font:600 13px "IBM Plex Sans";margin:14px 0 6px;color:var(--acc)}
+main{flex:1;display:grid;grid-template-columns:270px 1fr 360px;min-height:0}
+aside,section{padding:12px;overflow:auto;border-right:1px solid var(--line)}aside:last-child{border:0}
+label{display:block;color:var(--mute);font-size:12px;margin-top:8px}
+input,select,button,textarea{background:#0b141c;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:6px 8px;font:inherit;width:100%}
+button{width:auto;cursor:pointer}button.p{background:var(--acc);color:#1b1305;border:0;font-weight:600}button:focus-visible,input:focus-visible{outline:2px solid var(--acc)}
+.row{display:flex;gap:6px;align-items:end}.row>*{flex:1}.tabs{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}.tabs button.on{border-color:var(--acc);color:var(--acc)}
+table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:3px;border-bottom:1px solid var(--line);text-align:left}td input{padding:2px 4px;width:70px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px;margin-bottom:8px}.big{font:600 22px Fraunces,serif}
+.warn{color:var(--bad)}.mute{color:var(--mute);font-size:12px}#view{height:calc(100% - 40px);min-height:420px;background:#0a121a;border:1px solid var(--line)}
+svg text{fill:#dbe6ee;font-size:.95px;pointer-events:none}#three{width:100%;height:100%}.hide{display:none}img{width:100%;border-radius:4px}
+@media(max-width:1000px){main{grid-template-columns:1fr;overflow:auto}}
+</style></head><body>
+<header><h1>Home Decor & Construction Planning Studio</h1>
+<select id="sel" style="width:220px" aria-label="Project"></select>
+<button class="p" id="new">New project</button><button id="del">Delete</button></header>
+<main>
+<aside id="form"></aside>
+<section>
+ <div class="tabs"><button data-t="plan" class="on">2D plan</button><button data-t="3d">3D</button><button data-t="dash">Projects</button><button data-t="tl">Timeline</button><button data-t="vs">Vastu &amp; Solar</button><button data-t="sp">Suppliers</button><button id="pdf" class="p">PDF report</button>
+  <select id="floor" style="width:auto"></select>
+  <span id="views" class="hide"><button data-v="front">Front</button> <button data-v="back">Back</button> <button data-v="side">Side</button> <button data-v="top">Top</button> <button id="dn">Day/Night</button></span></div>
+ <div id="view"><svg id="svg" width="100%" height="100%"></svg><div id="three" class="hide"></div><div id="dash" class="hide" style="padding:12px"></div><div id="extra" class="hide" style="padding:12px;overflow:auto;height:100%"></div></div>
+ <div id="edit" class="card" style="margin-top:8px"></div>
+</section>
+<aside id="side"></aside>
+</main>
+<script type="module">
+import * as THREE from "three";import {OrbitControls} from "three/addons/controls/OrbitControls.js";
+const $=s=>document.querySelector(s),inr=n=>"₹"+Math.round(n).toLocaleString("en-IN");
+const api=async(u,o={})=>{const r=await fetch("/api"+u,{headers:{"Content-Type":"application/json"},...o,body:o.body&&JSON.stringify(o.body)});
+ const j=await r.json();if(!r.ok)throw new Error(j.detail||"Request failed");return j};
+let P=null,E=null,floor=0,selId=null,tab="plan",night=false,vb=null;
+const KC={Living:"#3d6b8c",Kitchen:"#8c6b3d",Bedroom:"#4f7a5c",Bathroom:"#5c7f8c",Dining:"#7a5c8c",Parking:"#555f66"};
+async function refreshList(open){const l=await api("/projects");$("#sel").innerHTML=l.map(p=>`<option value="${p.id}">${p.name}</option>`).join("")||"<option value=''>No projects</option>";
+ $("#dash").innerHTML=l.length?`<table><tr><th>ID<th>Name<th>Location<th>Created<th>Plot sq ft<th>Built-up<th>Est. cost<th>Done%</tr>`+l.map(p=>`<tr><td>${p.id}<td>${p.name}<td>${p.location}<td>${p.created}<td>${p.plot_area}<td>${p.built_up}<td>${inr(p.total)}<td>${p.progress}%</tr>`).join("")+"</table>":"<p class='mute'>No projects yet. Create one to start.</p>";
+ const id=open||$("#sel").value;if(id){$("#sel").value=id;await openP(id)}else{P=null;draw()}}
+async function openP(id){P=await api("/projects/"+id);E=await api(`/projects/${id}/estimate`);floor=Math.min(floor,P.floors-1);draw()}
+async function save(){try{P=await api("/projects/"+P.id,{method:"PUT",body:P});E=await api(`/projects/${P.id}/estimate`);draw()}catch(e){alert(e.message)}}
+$("#sel").onchange=e=>openP(e.target.value);
+$("#new").onclick=async()=>{const name=prompt("Project name");if(!name)return;try{const p=await api("/projects",{method:"POST",body:{name,plot_l:50,plot_w:30,location:"",extras:["Dining","Parking"]}});await refreshList(p.id)}catch(e){alert(e.message)}};
+$("#del").onclick=async()=>{if(P&&confirm(`Delete "${P.name}"? This cannot be undone.`)){await api("/projects/"+P.id,{method:"DELETE"});await refreshList()}};
+document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{tab=b.dataset.t;document.querySelectorAll("[data-t]").forEach(x=>x.classList.toggle("on",x==b));draw()});
+const F=(k,l,t="number",extra="")=>`<label>${l}<input data-k="${k}" type="${t}" ${extra} value="${P[k]}"></label>`;
+function drawForm(){if(!P){$("#form").innerHTML="<p class=mute>Create a project to begin.</p>";return}
+ $("#form").innerHTML=`<h3>Plot</h3>${F("name","Name","text")}${F("location","Location / address","text")}
+ <label>Unit<select data-k="unit"><option>ft<option>m</select></label>
+ <div class=row>${F("plot_l","Length","number","step=any min=1")}${F("plot_w","Width","number","step=any min=1")}</div>
+ <div class=row>${F("setback","Setback","number","step=any min=0")}${F("coverage","Coverage 0-1","number","step=0.05 min=0.2 max=1")}</div>
+ <h3>Family needs</h3><div class=row>${F("bedrooms","Bedrooms","number","min=1 max=8")}${F("bathrooms","Baths","number","min=1 max=8")}</div>
+ ${F("floors","Floors","number","min=1 max=4")}
+ <label>Extras (comma list)<input data-k="extras" value="${P.extras.join(", ")}"></label>
+ ${F("budget","Max budget (₹)","number","min=0")}
+ <h3>Colours</h3><div class=row>${F("wall_color","Walls","color")}${F("roof_color","Roof","color")}</div>
+ <h3>Layout option</h3><div class=row>${["economy","standard","premium"].map(t=>`<button data-lay="${t}" class="${P.tier==t?"p":""}">${t}</button>`).join("")}</div>
+ <p class=mute>Applying a layout regenerates rooms from your requirements and replaces manual edits.</p>
+ <label>Progress %<input data-k="progress" type="number" min=0 max=100 value="${P.progress}"></label>
+ <button class=p id=apply style="margin-top:10px">Save changes</button>`;
+ $("[data-k=unit]").value=P.unit;
+ $("#apply").onclick=async()=>{document.querySelectorAll("#form [data-k]").forEach(i=>{const k=i.dataset.k;
+   P[k]=k=="extras"?i.value.split(",").map(s=>s.trim()).filter(Boolean):i.type=="number"?+i.value:i.value});await save()};
+ document.querySelectorAll("[data-lay]").forEach(b=>b.onclick=async()=>{await save();P=await api(`/projects/${P.id}/layout/${b.dataset.lay}`);E=await api(`/projects/${P.id}/estimate`);selId=null;draw()})}
+function drawSide(){if(!E){$("#side").innerHTML="";return}const o=E.optimizer;
+ $("#side").innerHTML=`<div class=card><div class=mute>Estimated total (${P.tier})</div><div class=big>${inr(E.total)}</div>
+ <div class=mute>Range ${inr(E.min)} – ${inr(E.max)} · avg ${inr(E.avg)} · ${inr(E.per_sqft)}/sq ft · ${E.built_up} sq ft built-up</div>
+ <div class=mute>Plot ${Math.round(E.analysis.plot_area)} sq ft · buildable ${Math.round(E.analysis.buildable_area)} · utilization ${(E.analysis.utilization*100).toFixed(0)}%</div></div>
+ ${(E.warnings||[]).length?`<div class="card warn"><b>Layout warnings</b>${E.warnings.map(w=>`<div class=mute>${w}</div>`).join("")}</div>`:""}${o?`<div class=card><b>Budget</b> ${(o.utilization*100).toFixed(0)}% used ${o.over_by?`<div class=warn>Over budget by ${inr(o.over_by)}</div>`:""}
+ <div class=mute>Cheapest finish grade (${o.cheapest_tier}): ${inr(o.cheapest_total)} — saves ${inr(o.saving_vs_current)}. ${o.note}</div></div>`:""}
+ <div class=card><b>BOQ</b> <span class=mute>(edit qty / rate)</span><table><tr><th>Item<th>Qty<th>Unit<th>Rate<th>Amount</tr>${E.boq.map((r,i)=>`<tr><td>${r.name}<td>${r.category=="Other"?r.qty:`<input data-q="${r.name}" value="${r.qty}">`}<td>${r.unit}<td>${r.category=="Other"?inr(r.rate):`<input data-r="${r.name}" value="${r.rate}">`}<td>${inr(r.amount)}</tr>`).join("")}</table>
+ <p class=mute>${E.disclaimer}</p></div>
+ <div class=card><b>AI design concept</b><textarea id=pr rows=2 placeholder="Modern 2BHK living room"></textarea>
+ <div class=row style="margin-top:6px"><button class=p id=gen>Generate</button></div><div id=imgs></div></div>`;
+ document.querySelectorAll("[data-q]").forEach(i=>i.onchange=async()=>{P.qty_override[i.dataset.q]=+i.value;await save()});
+ document.querySelectorAll("[data-r]").forEach(i=>i.onchange=async()=>{const k=i.dataset.r.toLowerCase().replace(/ & /g,"_");P.rates[k]=+i.value/(["Flooring","Painting","Doors & Windows","Interior"].includes(i.dataset.r)?{economy:.8,standard:1,premium:1.6}[P.tier]:1);await save()});
+ $("#gen").onclick=async()=>{$("#imgs").innerHTML="<p class=mute>Generating…</p>";try{const r=await api("/ai/image",{method:"POST",body:{prompt:$("#pr").value,n:2}});$("#imgs").innerHTML=r.images.map(s=>`<img src="${s}" alt="AI concept">`).join("")}catch(e){$("#imgs").innerHTML=`<p class=warn>${e.message}</p>`}}}
+function drawEdit(){const r=P&&P.rooms.find(x=>x.id==selId);
+ $("#edit").innerHTML=r?`<b>${r.name}</b> · ${(r.w*r.h).toFixed(0)} sq ft<div class=row>${["name","x","y","w","h"].map(k=>`<label>${k}<input data-e="${k}" value="${r[k]}"></label>`).join("")}</div><div class=row style="margin-top:8px"><button class=p id=ru>Update room</button><button id=rd>Remove room</button><button id=ra>Add room</button></div>`
+ :`<span class=mute>Select a room on the plan or 3D view to edit it.</span> <button id=ra>Add room</button>`;
+ if(r){$("#ru").onclick=async()=>{document.querySelectorAll("[data-e]").forEach(i=>r[i.dataset.e]=i.dataset.e=="name"?i.value:Math.max(+i.value,i.dataset.e=="w"||i.dataset.e=="h"?3:0));await save()};
+  $("#rd").onclick=async()=>{P.rooms=P.rooms.filter(x=>x.id!=selId);selId=null;await save()}}
+ $("#ra").onclick=async()=>{const a=E.analysis;const n={id:Math.random().toString(36).slice(2,8),name:"New room",kind:"Store",floor,x:a.off_x,y:a.off_y,w:8,h:8};P.rooms.push(n);selId=n.id;await save()}}
+function drawPlan(){const a=E.analysis,s=$("#svg"),pad=6;
+ vb=vb&&vb.pid==P.id?vb:{pid:P.id,x:-pad,y:-pad,w:a.plot_l_ft+2*pad,h:a.plot_w_ft+2*pad};
+ s.setAttribute("viewBox",`${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+ const rooms=P.rooms.filter(r=>r.floor==floor);
+ s.innerHTML=`<rect x=0 y=0 width=${a.plot_l_ft} height=${a.plot_w_ft} fill="none" stroke="#6d8798" stroke-width=.25 stroke-dasharray="1 .6"/>
+ <rect x=${a.setback_ft} y=${a.setback_ft} width=${Math.max(a.plot_l_ft-2*a.setback_ft,0)} height=${Math.max(a.plot_w_ft-2*a.setback_ft,0)} fill="none" stroke="#e0a84a" stroke-width=.15 stroke-dasharray=".6 .6"/>`+
+ rooms.map(r=>`<g data-id="${r.id}" style="cursor:pointer"><rect x=${r.x} y=${r.y} width=${r.w} height=${r.h} fill="${KC[r.kind]||"#46566a"}" fill-opacity=".55" stroke="${r.id==selId?"#e0a84a":"#cfe0ea"}" stroke-width="${r.id==selId?.5:.3}"/>
+ <text x=${r.x+.6} y=${r.y+1.9}>${r.name}</text><text x=${r.x+.6} y=${r.y+3.1} style="fill:#9fb5c4">${r.w.toFixed(1)}×${r.h.toFixed(1)} ft</text><text x=${r.x+.6} y=${r.y+4.3} style="fill:#9fb5c4">${(r.w*r.h).toFixed(0)} sq ft</text></g>`).join("");
+ s.querySelectorAll("g").forEach(g=>g.onclick=()=>{selId=g.dataset.id;drawPlan();drawEdit()});
+ s.onwheel=e=>{e.preventDefault();const f=e.deltaY>0?1.1:.9;vb.x+=vb.w*(1-f)/2;vb.y+=vb.h*(1-f)/2;vb.w*=f;vb.h*=f;s.setAttribute("viewBox",`${vb.x} ${vb.y} ${vb.w} ${vb.h}`)}}
+// ---- 3D ----
+let R,scene,cam,ctl,sun,amb,H=10;
+function init3D(){if(R)return;R=new THREE.WebGLRenderer({antialias:true});$("#three").appendChild(R.domElement);scene=new THREE.Scene();
+ cam=new THREE.PerspectiveCamera(50,1,.1,2000);ctl=new OrbitControls(cam,R.domElement);amb=new THREE.HemisphereLight(0xffffff,0x445566,1);sun=new THREE.DirectionalLight(0xffffff,2);
+ sun.position.set(60,100,40);sun.castShadow=true;R.shadowMap.enabled=true;scene.add(amb,sun);
+ R.domElement.onclick=e=>{const b=R.domElement.getBoundingClientRect(),m=new THREE.Vector2((e.clientX-b.left)/b.width*2-1,-(e.clientY-b.top)/b.height*2+1),rc=new THREE.Raycaster();rc.setFromCamera(m,cam);
+  const h=rc.intersectObjects(scene.children,true).find(i=>i.object.userData&&i.object.userData.rid);if(h){selId=h.object.userData.rid;drawEdit()}};
+ const loop=()=>{requestAnimationFrame(loop);const b=$("#three");if(b.clientWidth){R.setSize(b.clientWidth,b.clientHeight);cam.aspect=b.clientWidth/b.clientHeight;cam.updateProjectionMatrix()}ctl.update();R.render(scene,cam)};loop()}
+function build3D(){init3D();scene.children.filter(o=>o.userData&&o.userData.m).forEach(o=>scene.remove(o));const a=E.analysis;
+ scene.background=new THREE.Color(night?0x070b12:0x9cc3e0);amb.intensity=night?.25:1;sun.intensity=night?.2:2;
+ const mk=(w,h,d,c,x,y,z,rid)=>{const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color:c}));m.position.set(x,y,z);m.userData={m:1,rid};m.castShadow=m.receiveShadow=true;scene.add(m);return m};
+ mk(a.plot_l_ft,.2,a.plot_w_ft,0x5d7f4f,a.plot_l_ft/2,-.1,a.plot_w_ft/2);
+ P.rooms.forEach(r=>{const cx=r.x+r.w/2,cz=r.y+r.h/2,y0=r.floor*H,t=.5,wc=r.id==selId?0xe0a84a:P.wall_color;
+  mk(r.w,.3,r.h,KC[r.kind]||0x888888,cx,y0+.15,cz,r.id);
+  mk(r.w,H-.3,t,wc,cx,y0+H/2,r.y+t/2);mk(r.w,H-.3,t,wc,cx,y0+H/2,r.y+r.h-t/2);
+  mk(t,H-.3,r.h,wc,r.x+t/2,y0+H/2,cz);mk(t,H-.3,r.h,wc,r.x+r.w-t/2,y0+H/2,cz);
+  if(r.kind=="Living"||r.kind=="Bedroom")mk(Math.min(4,r.w-2),4,.2,0x9fd3ff,cx,y0+5,r.y);   // window on north wall
+  if(r.kind=="Living")mk(3,7,.25,0x6b4a2f,r.x+r.w-2,y0+3.5,r.y+r.h);});                      // door
+ const top=P.rooms.filter(r=>r.floor==P.floors-1);if(top.length){const xs=top.map(r=>r.x),zs=top.map(r=>r.y),xe=top.map(r=>r.x+r.w),ze=top.map(r=>r.y+r.h);
+  const x0=Math.min(...xs),x1=Math.max(...xe),z0=Math.min(...zs),z1=Math.max(...ze);mk(x1-x0+1,.6,z1-z0+1,P.roof_color,(x0+x1)/2,P.floors*H+.3,(z0+z1)/2)}
+ if(P.floors>1&&P.rooms.length){const g=P.rooms.find(r=>r.floor==0);for(let f=0;f<P.floors-1;f++)for(let i=0;i<10;i++)mk(3,.4,1,0x998877,g.x+g.w-2,f*H+i,g.y+2+i*.9)}   // stair flight
+ setView("front",true)}
+function setView(v,keep){const a=E.analysis,c=new THREE.Vector3(a.plot_l_ft/2,P.floors*H/3,a.plot_w_ft/2),d=Math.max(a.plot_l_ft,a.plot_w_ft)*1.2;
+ const o={front:[0,.5,1],back:[0,.5,-1],side:[1,.5,0],top:[0,1.6,.01]}[v]||[0,.5,1];cam.position.set(c.x+o[0]*d,c.y+o[1]*d,c.z+o[2]*d);ctl.target.copy(c)}
+document.querySelectorAll("[data-v]").forEach(b=>b.onclick=()=>setView(b.dataset.v));$("#dn").onclick=()=>{night=!night;build3D()};
+function draw(){drawForm();drawSide();$("#floor").innerHTML=P?Array.from({length:P.floors},(_,i)=>`<option value=${i}>Floor ${i+1}</option>`).join(""):"";$("#floor").value=floor;
+ $("#floor").onchange=e=>{floor=+e.target.value;draw()};
+ $("#svg").classList.toggle("hide",tab!="plan");$("#three").classList.toggle("hide",tab!="3d");$("#dash").classList.toggle("hide",tab!="dash");$("#views").classList.toggle("hide",tab!="3d");
+ $("#extra").classList.toggle("hide",!["tl","vs","sp"].includes(tab));if(!P||!E){$("#edit").innerHTML="";return}if(["tl","vs","sp"].includes(tab))drawExtra();drawEdit();if(tab=="plan")drawPlan();if(tab=="3d")build3D()}
+async function drawExtra(){const x=$("#extra");
+ try{
+ if(tab=="tl"){const t=await api(`/projects/${P.id}/timeline`);
+  x.innerHTML=`<label style="max-width:200px">Start date<input type=date id=sd value="${P.start_date||""}"></label><p>Finish <b>${t.end}</b> · ${t.days} days · overall <b>${t.overall}%</b></p>
+  <table><tr><th>Stage<th>Days<th>Start<th>End<th>Depends on<th>Cost<th>Done %<th>Status</tr>${t.stages.map(s=>`<tr><td>${s.name}<td>${s.days}<td>${s.start}<td>${s.end}<td>${s.depends.join(", ")||"-"}<td>${inr(s.cost)}<td><input type=number min=0 max=100 data-sp="${s.name}" value="${s.pct}"><td>${s.status}</tr>`).join("")}</table>`;
+  $("#sd").onchange=async e=>{P.start_date=e.target.value;await save()};
+  x.querySelectorAll("[data-sp]").forEach(i=>i.onchange=async()=>{P.stage_progress[i.dataset.sp]=Math.min(100,Math.max(0,+i.value));
+   P.progress=Math.round(t.stages.reduce((a,s)=>a+(P.stage_progress[s.name]||0)*s.share,0)/100);await save()})}
+ if(tab=="vs"){const v=await api(`/projects/${P.id}/vastu`),s=v.solar;
+  x.innerHTML=`<p class=mute>${v.assumption}</p><table><tr><th>Room<th>Floor<th>Zone<th>Ideal<th>Status</tr>${v.vastu.map(r=>`<tr><td>${r.room}<td>${r.floor}<td>${r.zone}<td>${r.ideal}<td class="${r.status=="Matches"?"":"warn"}">${r.status}</tr>`).join("")}</table>
+  <div class=card style="margin-top:10px"><b>Rooftop solar</b><div>Usable roof ${s.usable_roof_sqft} sq ft · ~${s.capacity_kw} kW · ~${s.kwh_per_year} kWh/year · sample cost ${inr(s.sample_cost_inr)}</div><div class=mute>${s.note}</div></div>`}
+ if(tab=="sp"){const km=+(x.dataset.km||20),r=await api(`/projects/${P.id}/suppliers?km=${km}`);
+  x.innerHTML=`<p class=warn>${r.warning}</p><label style="max-width:200px">Distance to site (km)<input type=number id=km value="${km}" min=0></label>
+  <table><tr><th>Material<th>Vendor<th>Rate<th>Transport<th>Total</tr>${r.rows.map(s=>`<tr><td>${s.material}<td>${s.vendor}<td>${inr(s.rate)}/${s.unit}<td>${inr(s.transport)}<td>${inr(s.total)}</tr>`).join("")}</table>`;
+  $("#km").onchange=e=>{x.dataset.km=e.target.value;drawExtra()}}
+ }catch(e){x.innerHTML=`<p class=warn>${e.message}</p>`}}
+$("#pdf").onclick=async()=>{if(!P||!E)return;let shot="";
+ try{init3D();build3D();R.setSize(900,560);cam.aspect=900/560;cam.updateProjectionMatrix();ctl.update();R.render(scene,cam);shot=R.domElement.toDataURL("image/png")}catch(e){}
+ const r=await fetch(`/api/projects/${P.id}/report`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({shot})});
+ if(!r.ok){alert("PDF could not be created. Check that reportlab is installed.");return}
+ const u=URL.createObjectURL(await r.blob());Object.assign(document.createElement("a"),{href:u,download:P.name+".pdf"}).click()};
+refreshList();
+</script></body></html>
